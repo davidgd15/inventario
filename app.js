@@ -126,7 +126,6 @@ const save = async () => {
 let assetRequests = [];
 let assetRequestsUnsub = null;
 let assetRequestFilter = "Todos";
-let syncingApprovedRequestIds = new Set();
 let tab = "dash",
   flt = { q: "", tipo: "", status: "", empresa: "", local: "" },
   sort = { k: "id", d: 1 },
@@ -578,20 +577,6 @@ async function ensureAssetForRequest(request) {
   return saved;
 }
 
-async function syncApprovedRequestItems(requests) {
-  for (const request of requests) {
-    if (request.status !== "Aprovada" || !request.assetId || !request.tipo || syncingApprovedRequestIds.has(request.id)) continue;
-    syncingApprovedRequestIds.add(request.id);
-    try {
-      await ensureAssetForRequest(request);
-    } catch (error) {
-      syncingApprovedRequestIds.delete(request.id);
-      console.error("Falha ao cadastrar item de solicitação aprovada", request.id, error);
-      toast(`A solicitação ${request.assetId || "aprovada"} não pôde entrar no inventário: ${error.message}`);
-    }
-  }
-}
-
 function openAssetRequestDetails(id) {
   const request = assetRequests.find((item) => item.id === id);
   if (!request) return;
@@ -808,9 +793,17 @@ ${n ? "" : `<h3 style="margin-top:18px">Comentários e histórico</h3><div class
           title: "Excluir item",
         })
       ) {
-        const { error } = await window.assetsDb.from("ativos").delete().eq("id", x.id);
+        const { data: deletedRows, error } = await window.assetsDb
+          .from("ativos")
+          .delete()
+          .eq("id", x.id)
+          .select("id");
         if (error) {
           dlg("Não foi possível excluir no banco compartilhado: " + error.message);
+          return;
+        }
+        if (!(deletedRows || []).some((row) => String(row.id) === String(x.id))) {
+          dlg("O Supabase não confirmou a exclusão deste item. Verifique se a política RLS permite que David e Matheus excluam ativos.");
           return;
         }
         S = S.filter((i) => i != x);
@@ -1363,7 +1356,6 @@ firebase.auth().onAuthStateChanged(async (user) => {
     .orderBy("criadoEm", "desc")
     .onSnapshot((snapshot) => {
       assetRequests = snapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id }));
-      syncApprovedRequestItems(assetRequests);
       renderAssetRequests();
     }, (error) => {
       console.error("Falha ao carregar solicitações", error);
