@@ -187,6 +187,7 @@ function go(t) {
       if (error) throw error;
       S = (data || []).map((item) => ({
         ...item,
+        colab: String(item.colab ?? "").trim() === "-" ? "" : item.colab,
         qtd: +item.qtd || 1,
         valor: +item.valor || 0,
         hist: item.hist || [],
@@ -1399,14 +1400,36 @@ firebase.auth().onAuthStateChanged(async (user) => {
     }
     S = (data || []).map((item) => ({
       ...item,
+      colab: String(item.colab ?? "").trim() === "-" ? "" : item.colab,
       qtd: +item.qtd || 1,
       valor: +item.valor || 0,
       pos: numericDeskPosition(item.pos),
       hist: item.hist || [],
     }));
-    const posicoesNormalizadas = S.filter((item) =>
-      String(item.pos || "").trim() !== String((data || []).find((original) => original.id === item.id)?.pos || "").trim()
-    );
+    const ativosComColaboradorHifen = (data || [])
+      .filter((item) => String(item.colab ?? "").trim() === "-")
+      .map((item) => item.id)
+      .filter(Boolean);
+    if (ativosComColaboradorHifen.length) {
+      const { data: ativosAtualizados, error: colaboradorError } = await window.assetsDb
+        .from("ativos")
+        .update({ colab: "", updated_at: now() })
+        .in("id", ativosComColaboradorHifen)
+        .select("id");
+      if (colaboradorError) {
+        console.error("Não foi possível limpar os colaboradores marcados com hífen.", colaboradorError);
+        toast("Não foi possível limpar os colaboradores '-'. Confira a permissão de edição do Supabase.");
+      } else if ((ativosAtualizados || []).length < ativosComColaboradorHifen.length) {
+        console.warn("O Supabase atualizou menos ativos do que os carregados com colaborador '-'.", {
+          encontrados: ativosComColaboradorHifen.length,
+          atualizados: (ativosAtualizados || []).length,
+        });
+      }
+    }
+    const posicoesNormalizadas = S.filter((item) => {
+      const original = (data || []).find((candidate) => candidate.id === item.id);
+      return String(item.pos || "").trim() !== String(original?.pos || "").trim();
+    });
     if (posicoesNormalizadas.length) {
       const { error: normalizacaoError } = await window.assetsDb
         .from("ativos")
