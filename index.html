@@ -203,7 +203,8 @@
           <div class="card">
             <div class="row" style="justify-content:space-between;margin-bottom:12px"><h2 style="margin:0">Solicitações de itens</h2><span class="request-active-count" id="requestActiveCount">0 ativas</span></div>
             <div class="sub" style="margin-bottom:14px">Solicitações enviadas pelo Controle de ativos do RH.</div>
-            <div class="tw"><table><thead><tr><th>Solicitante</th><th>Item solicitado</th><th>Qtd</th><th>Observações</th><th>Data</th><th>Status</th><th>Ações</th></tr></thead><tbody id="requestRows"></tbody></table></div>
+            <div class="seg request-filter" aria-label="Filtrar solicitações por tipo"><button type="button" data-request-filter="Todos" class="on" onclick="setAssetRequestFilter('Todos')">Todas</button><button type="button" data-request-filter="Novo item" onclick="setAssetRequestFilter('Novo item')">Novo item</button><button type="button" data-request-filter="Alteração" onclick="setAssetRequestFilter('Alteração')">Alteração</button></div>
+            <div class="tw"><table><thead><tr><th>Solicitante</th><th>Tipo</th><th>Item / alteração</th><th>Qtd</th><th>Resumo</th><th>Data</th><th>Status</th><th>Ações</th></tr></thead><tbody id="requestRows"></tbody></table></div>
           </div>
         </section>
       </main>

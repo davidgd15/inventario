@@ -125,6 +125,7 @@ const save = async () => {
 };
 let assetRequests = [];
 let assetRequestsUnsub = null;
+let assetRequestFilter = "Todos";
 let syncingApprovedRequestIds = new Set();
 let tab = "dash",
   flt = { q: "", tipo: "", status: "", empresa: "", local: "" },
@@ -483,13 +484,27 @@ function renderAssetRequests() {
   if ($("#requestActiveCount")) $("#requestActiveCount").textContent = `${pending} ativa${pending === 1 ? "" : "s"}`;
   const rows = $("#requestRows");
   if (!rows) return;
-  rows.innerHTML = assetRequests.length ? assetRequests.map((request) => {
+  document.querySelectorAll("[data-request-filter]").forEach((button) => button.classList.toggle("on", button.dataset.requestFilter === assetRequestFilter));
+  const visibleRequests = assetRequests.filter((request) => {
+    const type = request.tipoSolicitacao === "Alteração" ? "Alteração" : "Novo item";
+    return assetRequestFilter === "Todos" || type === assetRequestFilter;
+  });
+  rows.innerHTML = visibleRequests.length ? visibleRequests.map((request) => {
     const date = request.criadoEm ? new Date(request.criadoEm).toLocaleString("pt-BR") : "—";
-    const title = [request.tipo, request.marca, request.modelo].filter(Boolean).map(esc).join(" · ") || "—";
+    const isChange = request.tipoSolicitacao === "Alteração";
+    const changes = Array.isArray(request.alteracoes) ? request.alteracoes : [];
+    const title = isChange
+      ? `${request.operacao || "Alteração"} · ${changes.map((change) => esc(change.assetId)).join(", ") || esc(request.assetId || "—")}`
+      : [request.tipo, request.marca, request.modelo].filter(Boolean).map(esc).join(" · ") || "—";
+    const summary = isChange
+      ? changes.map((change) => `${esc(change.antes?.colab || "Estoque")} → ${esc(change.depois?.colab || "Estoque")}`).join("; ")
+      : esc(request.obs || request.justificativa || "—");
     const canDecide = request.status === "Pendente";
-    return `<tr data-request-id="${esc(request.id)}" onclick="openAssetRequestDetails(this.dataset.requestId)" title="Ver detalhes da solicitação" style="cursor:pointer"><td>${esc(request.solicitanteNome || "—")}<div class="sub">${esc(request.solicitanteEmail || "")}</div></td><td>${esc(request.assetId || "—")} · ${title}</td><td>${esc(request.qtd || 1)}</td><td>${esc(request.obs || request.justificativa || "—")}</td><td>${esc(date)}</td><td><span class="pill ${requestStatusClass(request.status)}">${esc(request.status || "Pendente")}</span>${request.revisorNome ? `<div class="sub">por ${esc(request.revisorNome)}</div>` : ""}</td><td>${canDecide ? `<div class="row request-actions"><button class="btn pri" onclick="event.stopPropagation();decideAssetRequest('${esc(request.id)}','Aprovada')">Aprovar</button><button class="btn" onclick="event.stopPropagation();decideAssetRequest('${esc(request.id)}','Reprovada')">Reprovar</button></div>` : "—"}</td></tr>`;
-  }).join("") : '<tr><td colspan="7"><div class="empty">Nenhuma solicitação cadastrada.</div></td></tr>';
+    return `<tr data-request-id="${esc(request.id)}" onclick="openAssetRequestDetails(this.dataset.requestId)" title="Ver detalhes da solicitação" style="cursor:pointer"><td>${esc(request.solicitanteNome || "—")}<div class="sub">${esc(request.solicitanteEmail || "")}</div></td><td><span class="pill ${isChange ? "request-type-change" : "request-type-new"}">${isChange ? "Alteração" : "Novo item"}</span></td><td>${title}</td><td>${isChange ? changes.length : esc(request.qtd || 1)}</td><td>${summary}</td><td>${esc(date)}</td><td><span class="pill ${requestStatusClass(request.status)}">${esc(request.status || "Pendente")}</span>${request.revisorNome ? `<div class="sub">por ${esc(request.revisorNome)}</div>` : ""}</td><td>${canDecide ? `<div class="row request-actions"><button class="btn pri" onclick="event.stopPropagation();decideAssetRequest('${esc(request.id)}','Aprovada')">Aprovar</button><button class="btn" onclick="event.stopPropagation();decideAssetRequest('${esc(request.id)}','Reprovada')">Reprovar</button></div>` : "—"}</td></tr>`;
+  }).join("") : '<tr><td colspan="8"><div class="empty">Nenhuma solicitação neste filtro.</div></td></tr>';
 }
+
+window.setAssetRequestFilter = (filter) => { assetRequestFilter = filter; renderAssetRequests(); };
 
 function requestStatusClass(status) {
   return status === "Aprovada" ? "request-status-approved" : status === "Reprovada" ? "request-status-rejected" : "request-status-pending";
@@ -579,6 +594,17 @@ async function syncApprovedRequestItems(requests) {
 function openAssetRequestDetails(id) {
   const request = assetRequests.find((item) => item.id === id);
   if (!request) return;
+  if (request.tipoSolicitacao === "Alteração") {
+    const changes = Array.isArray(request.alteracoes) ? request.alteracoes : [];
+    const changeCard = (change) => {
+      const before = change.antes || {}, after = change.depois || {};
+      const fields = [["Colaborador", "colab"], ["Localização", "local"], ["Posição", "pos"], ["Status", "status"]];
+      return `<section class="request-change-card"><h3>${esc(change.assetId || "Ativo")} · ${esc([change.item?.tipo, change.item?.marca, change.item?.modelo].filter(Boolean).join(" ") || "—")}</h3><div class="request-change-grid"><b>Campo</b><b>Como era</b><b>Como ficará</b>${fields.map(([label,key]) => `<span>${label}</span><span>${esc(before[key] || "—")}</span><strong>${esc(after[key] || "—")}</strong>`).join("")}</div></section>`;
+    };
+    $("#mb").innerHTML = `<div class="row" style="justify-content:space-between;margin-bottom:14px"><div><h2 style="margin:0">Solicitação de alteração · ${esc(request.operacao || "Transferência")}</h2><div class="sub">Solicitada por ${esc(request.solicitanteNome || "—")} · ${esc(request.solicitanteEmail || "")}</div></div><button class="btn" onclick="closeAssetRequestDetails()">✕</button></div>${changes.map(changeCard).join("") || '<div class="empty">Detalhes da alteração não encontrados.</div>'}<div class="row" style="justify-content:space-between;margin-top:14px"><span class="pill ${requestStatusClass(request.status)}">${esc(request.status || "Pendente")}</span><span class="sub">${request.revisorNome ? `Revisado por ${esc(request.revisorNome)}` : ""}</span><button class="btn" onclick="closeAssetRequestDetails()">Fechar</button></div>`;
+    $("#m1").classList.add("on");
+    return;
+  }
   const field = (label, value, type = "text") => `<div><label>${label}</label><input type="${type}" value="${esc(value || "—")}" disabled></div>`;
   const values = [
     field("ID do Ativo (SN)", request.assetId), field("Tipo de Equipamento", request.tipo),
@@ -605,7 +631,10 @@ async function decideAssetRequest(id, status) {
   try {
     const request = assetRequests.find((item) => item.id === id);
     if (!request) throw new Error("Não encontrei os dados da solicitação. Atualize a lista e tente novamente.");
-    if (status === "Aprovada") await ensureAssetForRequest(request);
+    if (status === "Aprovada") {
+      if (request.tipoSolicitacao === "Alteração") await applyAssetChangeRequest(request);
+      else await ensureAssetForRequest(request);
+    }
     await firebase.firestore().collection("solicitacoes_ativos").doc(id).update({
       status,
       revisorNome: name,
@@ -615,6 +644,43 @@ async function decideAssetRequest(id, status) {
     });
   } catch (error) {
     dlg("Não foi possível atualizar a solicitação: " + error.message);
+  }
+}
+
+async function applyAssetChangeRequest(request) {
+  const changes = Array.isArray(request.alteracoes) ? request.alteracoes : [];
+  if (!changes.length) throw new Error("A solicitação não contém alterações para aplicar.");
+  const fields = ["colab", "local", "pos", "status"];
+  const prepared = [];
+  for (const change of changes) {
+    const id = String(change.assetId || "").trim();
+    if (!id || !change.antes || !change.depois) throw new Error("Há um item com dados incompletos na solicitação.");
+    const { data: current, error } = await window.assetsDb.from("ativos").select("*").eq("id", id).maybeSingle();
+    if (error) throw error;
+    if (!current) throw new Error(`O item ${id} não existe mais no inventário.`);
+    const matches = (values) => fields.every((key) => String(current[key] ?? "") === String(values[key] ?? ""));
+    if (matches(change.depois)) continue;
+    if (!matches(change.antes)) throw new Error(`O item ${id} foi alterado depois do envio desta solicitação. Atualize os dados e envie uma nova solicitação.`);
+    prepared.push({ id, current, after: Object.fromEntries(fields.map((key) => [key, change.depois[key] ?? ""])) });
+  }
+  const applied = [];
+  try {
+    for (const entry of prepared) {
+      const text = `${request.operacao || "Alteração"} aprovada: ${entry.current.colab || "Estoque"} → ${entry.after.colab || "Estoque"}; ${entry.current.local || "—"} / ${entry.current.pos || "—"} → ${entry.after.local || "—"} / ${entry.after.pos || "—"}`;
+      const payload = { ...entry.after, updated_at: now(), hist: [{ d: now(), t: text, autor: actorName() }, ...(entry.current.hist || [])] };
+      const { error } = await window.assetsDb.from("ativos").update(payload).eq("id", entry.id);
+      if (error) throw error;
+      applied.push(entry);
+      S = S.map((item) => item.id === entry.id ? { ...item, ...payload } : item);
+    }
+  } catch (error) {
+    for (const entry of applied.reverse()) {
+      const rollback = { colab: entry.current.colab, local: entry.current.local, pos: entry.current.pos, status: entry.current.status, updated_at: entry.current.updated_at || now(), hist: entry.current.hist || [] };
+      const { error: rollbackError } = await window.assetsDb.from("ativos").update(rollback).eq("id", entry.id);
+      if (rollbackError) console.error("Falha ao restaurar item após erro na alteração", entry.id, rollbackError);
+      S = S.map((item) => item.id === entry.id ? { ...item, ...rollback } : item);
+    }
+    throw error;
   }
 }
 

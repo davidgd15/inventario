@@ -128,10 +128,18 @@ aside {
   font-size: 13px;
   font-weight: 700;
 }
-.request-status-pending { background: #FAEEDA; color: #633806; }
-.request-status-approved { background: #EAF3DE; color: #27500A; }
-.request-status-rejected { background: #FCEBEB; color: #791F1F; }
+.pill.request-status-pending { background: #FAEEDA; color: #633806; }
+.pill.request-status-approved { background: #EAF3DE; color: #27500A; }
+.pill.request-status-rejected { background: #FCEBEB; color: #791F1F; }
+.pill.request-type-new { background: #EAF3DE; color: #27500A; }
+.pill.request-type-change { background: #E8E9FF; color: #3434A8; }
 .request-actions { flex-wrap: nowrap; }
+.request-filter { margin: 0 0 14px; max-width: 440px; }
+.request-change-card { border: 1px solid var(--bd); border-radius: 12px; padding: 14px; margin: 12px 0; }
+.request-change-card h3 { margin: 0 0 10px; }
+.request-change-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px 12px; align-items: center; font-size: 13px; }
+.request-change-grid > :nth-child(3n + 1) { color: var(--mut); }
+.request-change-grid > :nth-child(3n + 3) { color: var(--ac); }
 .sidebar-account {
   display: grid;
   gap: 10px;
@@ -333,6 +341,9 @@ tbody tr:hover {
 }
 .mask.on {
   display: flex;
+}
+#m3.mask.on {
+  z-index: 1000;
 }
 .modal {
   background: var(--card);
