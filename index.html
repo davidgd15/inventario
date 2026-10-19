@@ -12,6 +12,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="runtime-config.js"></script>
     <script src="firebase-assets.js"></script>
@@ -35,6 +36,7 @@
         <button class="nav on" data-t="dash"><i class="fa-solid fa-chart-line"></i> Dashboard</button
         ><button class="nav" data-t="inv"><i class="fa-solid fa-warehouse"></i> Inventário</button
         ><button class="nav" data-t="mov"><i class="fa-solid fa-clock-rotate-left"></i> Movimentações</button>
+        <button class="nav" data-t="req"><i class="fa-solid fa-clipboard-list"></i> Solicitações <span class="request-count" id="requestCount" hidden>0</span></button>
         <div class="sidebar-account">
           <span id="connectedUser" class="sidebar-user"></span>
           <button class="btn sidebar-logout" id="bLogout">Sair</button>
@@ -194,6 +196,14 @@
             </div>
             <div class="sub" id="mc" style="margin-bottom: 6px"></div>
             <div class="list" id="feed"></div>
+          </div>
+        </section>
+
+        <section id="req" class="hide">
+          <div class="card">
+            <div class="row" style="justify-content:space-between;margin-bottom:12px"><h2 style="margin:0">Solicitações de itens</h2><span class="request-active-count" id="requestActiveCount">0 ativas</span></div>
+            <div class="sub" style="margin-bottom:14px">Solicitações enviadas pelo Controle de ativos do RH.</div>
+            <div class="tw"><table><thead><tr><th>Solicitante</th><th>Item solicitado</th><th>Qtd</th><th>Observações</th><th>Data</th><th>Status</th><th>Ações</th></tr></thead><tbody id="requestRows"></tbody></table></div>
           </div>
         </section>
       </main>

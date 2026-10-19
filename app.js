@@ -123,6 +123,9 @@ const save = async () => {
   if ($("#bImp")) $("#bImp").disabled = true;
   return true;
 };
+let assetRequests = [];
+let assetRequestsUnsub = null;
+let syncingApprovedRequestIds = new Set();
 let tab = "dash",
   flt = { q: "", tipo: "", status: "", empresa: "", local: "" },
   sort = { k: "id", d: 1 },
@@ -168,10 +171,10 @@ const log = (it, t, c) =>
   it.hist.unshift({ d: now(), t, ...(c ? { c } : {}), autor: actorName() });
 
 /* navegação */
-const TT = { dash: "Dashboard", inv: "Inventário", mov: "Movimentações" };
+const TT = { dash: "Dashboard", inv: "Inventário", mov: "Movimentações", req: "Solicitações" };
 function go(t) {
   tab = t;
-  ["dash", "inv", "mov"].forEach((x) =>
+  ["dash", "inv", "mov", "req"].forEach((x) =>
     $("#" + x).classList.toggle("hide", x != t),
   );
   document
@@ -468,7 +471,151 @@ document.addEventListener("click", (e) => {
 });
 $("#mov .list").id = "feed";
 function render() {
-  tab == "dash" ? dash() : tab == "inv" ? inv() : mov();
+  tab == "dash" ? dash() : tab == "inv" ? inv() : tab == "req" ? renderAssetRequests() : mov();
+}
+
+function renderAssetRequests() {
+  const pending = assetRequests.filter((request) => request.status === "Pendente").length;
+  if ($("#requestCount")) {
+    $("#requestCount").textContent = pending;
+    $("#requestCount").hidden = pending === 0;
+  }
+  if ($("#requestActiveCount")) $("#requestActiveCount").textContent = `${pending} ativa${pending === 1 ? "" : "s"}`;
+  const rows = $("#requestRows");
+  if (!rows) return;
+  rows.innerHTML = assetRequests.length ? assetRequests.map((request) => {
+    const date = request.criadoEm ? new Date(request.criadoEm).toLocaleString("pt-BR") : "—";
+    const title = [request.tipo, request.marca, request.modelo].filter(Boolean).map(esc).join(" · ") || "—";
+    const canDecide = request.status === "Pendente";
+    return `<tr data-request-id="${esc(request.id)}" onclick="openAssetRequestDetails(this.dataset.requestId)" title="Ver detalhes da solicitação" style="cursor:pointer"><td>${esc(request.solicitanteNome || "—")}<div class="sub">${esc(request.solicitanteEmail || "")}</div></td><td>${esc(request.assetId || "—")} · ${title}</td><td>${esc(request.qtd || 1)}</td><td>${esc(request.obs || request.justificativa || "—")}</td><td>${esc(date)}</td><td><span class="pill ${requestStatusClass(request.status)}">${esc(request.status || "Pendente")}</span>${request.revisorNome ? `<div class="sub">por ${esc(request.revisorNome)}</div>` : ""}</td><td>${canDecide ? `<div class="row request-actions"><button class="btn pri" onclick="event.stopPropagation();decideAssetRequest('${esc(request.id)}','Aprovada')">Aprovar</button><button class="btn" onclick="event.stopPropagation();decideAssetRequest('${esc(request.id)}','Reprovada')">Reprovar</button></div>` : "—"}</td></tr>`;
+  }).join("") : '<tr><td colspan="7"><div class="empty">Nenhuma solicitação cadastrada.</div></td></tr>';
+}
+
+function requestStatusClass(status) {
+  return status === "Aprovada" ? "request-status-approved" : status === "Reprovada" ? "request-status-rejected" : "request-status-pending";
+}
+
+function assetPayloadFromRequest(request) {
+  const colab = String(request.colab || "").trim();
+  let local = String(request.local || "").trim();
+  let pos = String(request.pos || "").trim();
+  const deskPosition = pos.match(/^mesa\s*(\d+)$/i);
+  if (deskPosition) pos = String(Number(deskPosition[1]));
+  let status = String(request.statusItem || "").trim();
+  if (colab) {
+    status ||= "Em uso";
+    if (!local || nz(local) === "estoque") local = pos && pos !== "-" ? "Escritório" : "Remoto";
+    if (!pos) pos = "-";
+  } else {
+    if (!local || nz(local) === "estoque") local = "Estoque";
+    if (nz(local) === "estoque") pos = "-";
+    status ||= "Disponível";
+  }
+  return {
+    id: String(request.assetId || "").trim(),
+    tipo: String(request.tipo || "").trim(),
+    marca: String(request.marca || "").trim(),
+    modelo: String(request.modelo || "").trim(),
+    serie: String(request.serie || "").trim(),
+    qtd: Math.max(1, Number(request.qtd) || 1),
+    colab,
+    empresa: String(request.empresa || "").trim(),
+    local,
+    pos,
+    status,
+    data: String(request.data || "").trim(),
+    nf: String(request.nf || "").trim(),
+    valor: Number(request.valor) || 0,
+    garantia: String(request.garantia || "").trim(),
+    imei: String(request.imei || "").trim(),
+    obs: String(request.obs || "").trim(),
+    updated_at: now(),
+    hist: [{ d: now(), t: "Item cadastrado a partir de uma solicitação aprovada", autor: actorName() }],
+  };
+}
+
+async function ensureAssetForRequest(request) {
+  const payload = assetPayloadFromRequest(request);
+  if (!payload.id || !payload.tipo) throw new Error("A solicitação precisa ter ID do ativo e tipo de equipamento.");
+  const { data: existing, error: lookupError } = await window.assetsDb
+    .from("ativos").select("*").eq("id", payload.id).maybeSingle();
+  if (lookupError) throw lookupError;
+  const matchesRequest = (item) => ["tipo", "marca", "modelo", "serie"].every((key) =>
+    String(item?.[key] ?? "") === String(payload[key] ?? ""),
+  );
+  if (existing) {
+    if (!matchesRequest(existing)) throw new Error(`O ID ${payload.id} já está em uso por outro ativo. Não fiz alterações nesse item.`);
+    return existing;
+  }
+  let { data, error } = await window.assetsDb.from("ativos").insert(payload).select().maybeSingle();
+  if (error) {
+    const { data: racedItem, error: racedLookupError } = await window.assetsDb
+      .from("ativos").select("*").eq("id", payload.id).maybeSingle();
+    if (!racedLookupError && racedItem && matchesRequest(racedItem)) data = racedItem;
+    else throw error;
+  }
+  const saved = data || payload;
+  S = S.filter((item) => item.id !== payload.id);
+  S.push({ ...saved, qtd: +saved.qtd || 1, valor: +saved.valor || 0, hist: saved.hist || payload.hist });
+  assetImportLocked = true;
+  if (tab === "inv") render();
+  return saved;
+}
+
+async function syncApprovedRequestItems(requests) {
+  for (const request of requests) {
+    if (request.status !== "Aprovada" || !request.assetId || !request.tipo || syncingApprovedRequestIds.has(request.id)) continue;
+    syncingApprovedRequestIds.add(request.id);
+    try {
+      await ensureAssetForRequest(request);
+    } catch (error) {
+      syncingApprovedRequestIds.delete(request.id);
+      console.error("Falha ao cadastrar item de solicitação aprovada", request.id, error);
+      toast(`A solicitação ${request.assetId || "aprovada"} não pôde entrar no inventário: ${error.message}`);
+    }
+  }
+}
+
+function openAssetRequestDetails(id) {
+  const request = assetRequests.find((item) => item.id === id);
+  if (!request) return;
+  const field = (label, value, type = "text") => `<div><label>${label}</label><input type="${type}" value="${esc(value || "—")}" disabled></div>`;
+  const values = [
+    field("ID do Ativo (SN)", request.assetId), field("Tipo de Equipamento", request.tipo),
+    field("Marca", request.marca), field("Modelo", request.modelo), field("n° de Série", request.serie),
+    field("Qtd", request.qtd), field("Colaborador", request.colab), field("Empresa Proprietária", request.empresa),
+    field("Localização", request.local), field("Posição", request.pos), field("Status", request.statusItem),
+    field("Data de Aquisição", request.data, "text"), field("NF", request.nf), field("Valor (R$)", request.valor),
+    field("Garantia (até)", request.garantia), field("Imei", request.imei),
+    `<div style="grid-column:1/-1"><label>Observações</label><textarea rows="2" disabled>${esc(request.obs || request.justificativa || "")}</textarea></div>`,
+  ].join("");
+  $("#mb").innerHTML = `<div class="row" style="justify-content:space-between;margin-bottom:14px"><div><h2 style="margin:0">Solicitação · ${esc(request.assetId || "Item")}</h2><div class="sub">Solicitado por ${esc(request.solicitanteNome || "—")} · ${esc(request.solicitanteEmail || "")}</div></div><button class="btn" onclick="closeAssetRequestDetails()">✕</button></div><div class="f">${values}</div><div class="row" style="justify-content:space-between;margin-top:14px"><span class="pill ${requestStatusClass(request.status)}">${esc(request.status || "Pendente")}</span><span class="sub">${request.revisorNome ? `Revisado por ${esc(request.revisorNome)}` : ""}</span><button class="btn" onclick="closeAssetRequestDetails()">Fechar</button></div>`;
+  $("#m1").classList.add("on");
+}
+
+function closeAssetRequestDetails() {
+  $("#m1").classList.remove("on");
+}
+
+async function decideAssetRequest(id, status) {
+  const user = firebase.auth().currentUser;
+  const email = user?.email?.toLowerCase();
+  const name = window.ASSET_ALLOWED_USERS?.[email];
+  if (!name) return dlg("Esta conta não pode aprovar solicitações.");
+  try {
+    const request = assetRequests.find((item) => item.id === id);
+    if (!request) throw new Error("Não encontrei os dados da solicitação. Atualize a lista e tente novamente.");
+    if (status === "Aprovada") await ensureAssetForRequest(request);
+    await firebase.firestore().collection("solicitacoes_ativos").doc(id).update({
+      status,
+      revisorNome: name,
+      revisorEmail: user.email,
+      revisorUid: user.uid,
+      revisadoEm: now(),
+    });
+  } catch (error) {
+    dlg("Não foi possível atualizar a solicitação: " + error.message);
+  }
 }
 
 /* modal item */
@@ -877,7 +1024,7 @@ function assignToCollaborator(item, name) {
 function previewCollaboratorAssignment(input) {
   const name = input.value.trim();
   if (!name) return;
-  const form = input.closest("#ff");
+  const form = input.closest("#ff, #requestAssetForm");
   const local = form?.querySelector('[name="local"]');
   const position = form?.querySelector('[name="pos"]');
   const status = form?.querySelector('[name="status"]');
@@ -1144,6 +1291,17 @@ firebase.auth().onAuthStateChanged(async (user) => {
     await firebase.auth().signOut();
     return;
   }
+  if (assetRequestsUnsub) assetRequestsUnsub();
+  assetRequestsUnsub = firebase.firestore().collection("solicitacoes_ativos")
+    .orderBy("criadoEm", "desc")
+    .onSnapshot((snapshot) => {
+      assetRequests = snapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id }));
+      syncApprovedRequestItems(assetRequests);
+      renderAssetRequests();
+    }, (error) => {
+      console.error("Falha ao carregar solicitações", error);
+      dlg("Não foi possível carregar as solicitações: " + error.message);
+    });
   $("#authGate").style.display = "none";
   $("#inventoryApp").style.display = "";
   $("#authPassword").value = "";
